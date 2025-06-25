@@ -1,51 +1,34 @@
 package app.web.pages.home;
 
-import app.model.Todo;
-import app.services.AttachmentsService;
-import app.services.ExcelGeneratorService;
-import app.services.MongoDBService;
-import app.services.PdfGeneratorService;
-import app.web.pages.AJAXDownload;
-import app.web.pages.AlertMessageEvent;
-import com.mongodb.client.gridfs.GridFSFindIterable;
-import lombok.AllArgsConstructor;
-import lombok.Data;
-import lombok.extern.slf4j.Slf4j;
-import org.apache.poi.ss.usermodel.Workbook;
-import org.apache.wicket.ajax.AjaxRequestTarget;
-import org.apache.wicket.ajax.form.AjaxFormSubmitBehavior;
-import org.apache.wicket.ajax.markup.html.AjaxLink;
-import org.apache.wicket.event.IEvent;
-import org.apache.wicket.markup.html.WebMarkupContainer;
-import org.apache.wicket.markup.html.basic.Label;
-import org.apache.wicket.markup.html.form.CheckBox;
-import org.apache.wicket.markup.html.form.Form;
-import org.apache.wicket.markup.html.form.TextField;
-import org.apache.wicket.markup.html.form.upload.FileUpload;
-import org.apache.wicket.markup.html.form.upload.FileUploadField;
-import org.apache.wicket.markup.html.link.ExternalLink;
-import org.apache.wicket.markup.html.list.ListItem;
-import org.apache.wicket.markup.html.list.ListView;
-import org.apache.wicket.markup.html.panel.FeedbackPanel;
-import org.apache.wicket.model.CompoundPropertyModel;
-import org.apache.wicket.model.Model;
-import org.apache.wicket.model.PropertyModel;
-import org.apache.wicket.spring.injection.annot.SpringBean;
-import org.apache.wicket.util.lang.Bytes;
-import org.apache.wicket.util.resource.AbstractResourceStreamWriter;
-import org.apache.wicket.util.resource.IResourceStream;
-import org.wicketstuff.annotation.mount.MountPath;
+import app.model.*;
+import app.services.*;
+import app.web.pages.*;
+import com.giffing.wicket.spring.boot.context.scan.*;
+import com.mongodb.client.gridfs.*;
+import lombok.*;
+import lombok.extern.slf4j.*;
+import org.apache.poi.ss.usermodel.*;
+import org.apache.wicket.ajax.*;
+import org.apache.wicket.ajax.form.*;
+import org.apache.wicket.ajax.markup.html.*;
+import org.apache.wicket.ajax.markup.html.form.*;
+import org.apache.wicket.event.*;
+import org.apache.wicket.markup.html.*;
+import org.apache.wicket.markup.html.basic.*;
+import org.apache.wicket.markup.html.form.*;
+import org.apache.wicket.markup.html.form.upload.*;
+import org.apache.wicket.markup.html.link.*;
+import org.apache.wicket.markup.html.list.*;
+import org.apache.wicket.markup.html.panel.*;
+import org.apache.wicket.model.*;
+import org.apache.wicket.spring.injection.annot.*;
+import org.apache.wicket.util.lang.*;
+import org.apache.wicket.util.resource.*;
+import org.wicketstuff.annotation.mount.*;
 
-import com.giffing.wicket.spring.boot.context.scan.WicketHomePage;
-import app.web.pages.BasePage;
-
-import java.io.IOException;
-import java.io.OutputStream;
-import java.io.Serializable;
-import java.util.ArrayList;
-import java.util.List;
-import java.util.stream.Collectors;
-import java.util.stream.StreamSupport;
+import java.io.*;
+import java.util.*;
+import java.util.stream.*;
 
 @WicketHomePage
 @MountPath(value = "home", alt = {"home2"})
@@ -107,9 +90,12 @@ public class HomePage extends BasePage {
     ListView<Todo> todosList = new ListView<>("todosList", todos) {
       @Override
       protected void populateItem(ListItem<Todo> item) {
-        item.add(new CheckBox("selected", new PropertyModel(item.getModel(), "selected")));
-        item.add(new Label("title", new PropertyModel(item.getModel(), "title")));
-        item.add(new Label("body", new PropertyModel(item.getModel(), "body")));
+        // se pueden agregar los campos porpropertyModel infiriendo o escribiendo el tipo
+        // se puede usar directamente con una expresion lambda
+        item.add(new CheckBox("selected", new PropertyModel<>(item.getModel(), "selected")));
+        item.add(new Label("title", new PropertyModel<String>(item.getModel(), "title")));
+        item.add(new Label("body", () -> item.getModelObject().getBody()));
+
       }
     };
     todosList.setOutputMarkupPlaceholderTag(true);
@@ -201,45 +187,55 @@ public class HomePage extends BasePage {
     formNew.add(title);
     formNew.add(body);
 
-    AjaxLink<Void> btnSave = new AjaxLink<Void>("save") {
+    // we can use AjaxButton instead of AjaxLink
+    AjaxButton btnSave = new AjaxButton("save") {
       @Override
-      public void onClick(AjaxRequestTarget target) {
+      protected void onSubmit(AjaxRequestTarget target) {
+
+        /* add content validation */
+        if (title.getValue().isEmpty()) {
+          showMessage(target, "Title is required", MessageType.Warn.toString());
+          return;
+        }
+        if (body.getValue().isEmpty()) {
+          showMessage(target, "Body is required", MessageType.Warn.toString());
+          return;
+        }
+
         Todo todo = new Todo();
         todo.setTitle(title.getValue());
         todo.setBody(todoItem.getBody());
         mongoDBService.addToItems(todo);
-
-        todos.clear();
-        todos.addAll(mongoDBService.getAllItems());
+// add a method to refresh
+        refreshTodosList(todos);
 
         formNew.setVisible(false);
 
         todoItem.setTitle("");
         todoItem.setBody("");
         target.add(sectionForm);
+        //change the message method
+        showMessage(target, "Todo saved into database", MessageType.Info.toString());
+      }
 
-        showInfo(target, "Todo saved into database");
-        //send(getPage(), Broadcast.DEPTH, new AlertMessageEvent(target, "Todo was saved ..."));
-
+      @Override
+      protected void onError(AjaxRequestTarget target) {
+        showMessage(target, "Error to save Todo", MessageType.Error.toString());
       }
     };
-    btnSave.add(new AjaxFormSubmitBehavior(form, "click") {
-    });
+
     formNew.add(btnSave);
 
 
     AjaxLink<Void> btnRemove = new AjaxLink<Void>("remove") {
       @Override
       public void onClick(AjaxRequestTarget target) {
-        List<Todo> todosToRemove = todos.stream()
-                .filter(todo -> todo.isSelected())
-                .collect(Collectors.toList());
+        List<Todo> todosToRemove = todos.stream().filter(todo -> todo.isSelected()).collect(Collectors.toList());
         mongoDBService.removeItems(todosToRemove);
 
-        todos.clear();
-        todos.addAll(mongoDBService.getAllItems());
+        refreshTodosList(todos);
 
-        showInfo(target, "Selected items removed ...");
+        showMessage(target, "Selected items removed ...", MessageType.Info.toString());
         target.add(sectionForm);
       }
     };
@@ -309,7 +305,7 @@ public class HomePage extends BasePage {
         AjaxLink<Void> removeLink = new AjaxLink<>("removeLink") {
           @Override
           public void onClick(AjaxRequestTarget target) {
-            showInfo(target, "File removed: " + item.getModelObject().getFilename());
+            showMessage(target, "File removed: " + item.getModelObject().getFilename(), MessageType.Info.toString());
             attachmentsService.deleteAttachment(item.getModelObject().getId());
             updateFilesList(files);
             target.add(filesListSection);
@@ -324,16 +320,27 @@ public class HomePage extends BasePage {
     filesListSection.add(filesList);
   }
 
+  private void refreshTodosList(List<Todo> todos) {
+    todos.clear();
+    todos.addAll(mongoDBService.getAllItems());
+  }
+
   private void updateFilesList(List<FileItem> files) {
     GridFSFindIterable filesIterable = attachmentsService.listAllFiles();
     files.clear();
-    files.addAll(StreamSupport.stream(filesIterable.spliterator(), false)
-            .map(gridFSFile -> new FileItem(gridFSFile.getObjectId().toString(), gridFSFile.getFilename(), gridFSFile.getLength()))
-            .collect(Collectors.toList()));
+    files.addAll(StreamSupport.stream(filesIterable.spliterator(), false).map(gridFSFile -> new FileItem(gridFSFile.getObjectId().toString(), gridFSFile.getFilename(), gridFSFile.getLength())).collect(Collectors.toList()));
   }
 
-  protected void showInfo(AjaxRequestTarget target, String msg) {
-    info(msg);
+  protected void showMessage(AjaxRequestTarget target, String msg, String typeMessage) {
+    if (MessageType.Info.toString().equals(typeMessage)) {
+      info(msg);
+    }
+    if (MessageType.Warn.toString().equals(typeMessage)) {
+      warn(msg);
+    }
+    if (MessageType.Error.toString().equals(typeMessage)) {
+      error(msg);
+    }
     target.add(fp);
   }
 
@@ -343,6 +350,9 @@ public class HomePage extends BasePage {
     String id;
     String filename;
     long length;
+  }
+  public enum MessageType {
+    Info, Warn, Error
   }
 
 }

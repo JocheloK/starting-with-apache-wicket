@@ -4,10 +4,12 @@ import lombok.Data;
 import lombok.NoArgsConstructor;
 import org.springframework.data.annotation.Id;
 import org.springframework.data.annotation.Transient;
+import org.springframework.data.mongodb.core.mapping.Document;
 
 import java.io.Serializable;
 import java.time.LocalDateTime;
 
+@Document
 @Data
 @NoArgsConstructor
 public class Todo implements Serializable {
@@ -23,12 +25,4 @@ public class Todo implements Serializable {
   private String author;
 
   private boolean closed = false;
-
-  public boolean isSelected() {
-    return selected;
-  }
-
-  public void setSelected(boolean selected) {
-    this.selected = selected;
-  }
 }
